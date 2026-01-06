@@ -1,0 +1,351 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+    <title>圣经单词学习终端</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        @import url('https://fonts.googleapis.com/css2?family=Noto+Serif+JP:wght@400;700&family=Shippori+Mincho:wght@400;700&display=swap');
+        
+        body { 
+            font-family: 'Shippori Mincho', 'Noto Serif JP', serif; 
+            background-color: #f7f3f0; 
+            color: #2d2d2d; 
+            padding-top: env(safe-area-inset-top);
+        }
+
+        /* 选项卡激活样式 */
+        .tab-btn.active {
+            background-color: white;
+            color: #292524;
+            box-shadow: 0 1px 3px rgba(0,0,0,0.1);
+        }
+
+        .perspective { perspective: 1000px; }
+        .card-inner { 
+            position: relative; width: 100%; height: 100%; 
+            transition: transform 0.6s cubic-bezier(0.4, 0, 0.2, 1); 
+            transform-style: preserve-3d; cursor: pointer; 
+        }
+        .card-inner.is-flipped { transform: rotateY(180deg); }
+        
+        .card-front, .card-back { 
+            position: absolute; width: 100%; height: 100%; 
+            backface-visibility: hidden; border-radius: 2rem; 
+            padding: 2rem; background: white; 
+            box-shadow: 0 10px 30px rgba(0,0,0,0.05); 
+            border: 1px solid #e9e4e1; display: flex; flex-direction: column; 
+        }
+        .card-back { transform: rotateY(180deg); overflow-y: auto; }
+
+        .status-dot { width: 8px; height: 8px; border-radius: 50%; display: inline-block; }
+        .status-online { background: #10b981; box-shadow: 0 0 8px #10b981; }
+        .status-offline { background: #ef4444; box-shadow: 0 0 8px #ef4444; }
+
+        /* 通知 */
+        .toast-item { animation: slideDown 0.3s ease forwards; }
+        @keyframes slideDown { from { transform: translateY(-100%); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
+    </style>
+</head>
+<body class="min-h-screen pb-10">
+
+    <div id="toast-container" class="fixed top-4 left-0 right-0 z-[100] flex flex-col items-center gap-2 pointer-events-none"></div>
+
+    <div class="max-w-4xl mx-auto px-4">
+        <header class="py-6 flex flex-col items-center border-b border-stone-200 mb-6">
+            <h1 class="text-2xl font-bold italic text-stone-800 mb-2">圣经单词记忆</h1>
+            <div class="flex items-center gap-2 mb-6">
+                <span id="net-dot" class="status-dot status-online"></span>
+                <span id="net-text" class="text-[10px] font-bold text-stone-400 uppercase tracking-widest">在线同步</span>
+            </div>
+            
+            <!-- 修复后的选项卡：通过 ID 和 class 确保点击 -->
+            <div class="flex bg-stone-200/50 p-1 rounded-2xl w-full max-w-sm z-50">
+                <button onclick="changeView('learn')" id="tab-learn" class="tab-btn active flex-1 py-2 rounded-xl text-sm font-bold text-stone-500 transition-all">学习</button>
+                <button onclick="changeView('community')" id="tab-community" class="tab-btn flex-1 py-2 rounded-xl text-sm font-bold text-stone-500 transition-all">分享</button>
+                <button onclick="changeView('admin')" id="tab-admin" class="tab-btn flex-1 py-2 rounded-xl text-sm font-bold text-stone-500 transition-all">管理</button>
+            </div>
+        </header>
+
+        <!-- 学习页面 -->
+        <section id="view-learn" class="view-content">
+            <div class="grid grid-cols-2 md:grid-cols-4 gap-2 mb-6">
+                <input type="date" id="f-date-filter" onchange="applyFilters()" class="h-10 px-3 bg-white border border-stone-200 rounded-xl text-xs">
+                <select id="f-book-filter" onchange="applyFilters()" class="h-10 px-3 bg-white border border-stone-200 rounded-xl text-xs">
+                    <option value="all">全部书卷</option>
+                </select>
+                <select id="f-type-filter" onchange="applyFilters()" class="h-10 px-3 bg-white border border-stone-200 rounded-xl text-xs">
+                    <option value="all">全部类型</option>
+                    <option value="单词">单词</option>
+                    <option value="语法">语法</option>
+                    <option value="成语">成语</option>
+                </select>
+                <select id="f-mastery-filter" onchange="applyFilters()" class="h-10 px-3 bg-white border border-stone-200 rounded-xl text-xs font-bold">
+                    <option value="all">所有状态</option>
+                    <option value="unmastered">📖 未掌握</option>
+                    <option value="mastered">✅ 已掌握</option>
+                </select>
+            </div>
+
+            <div class="max-w-md mx-auto">
+                <div class="flex justify-between items-end mb-2 px-1">
+                    <span id="prog-val" class="text-xl font-bold text-stone-800">0 / 0</span>
+                    <span id="prog-pct" class="text-[10px] font-bold text-stone-400">0%</span>
+                </div>
+                <div class="h-1 bg-stone-200 rounded-full overflow-hidden mb-8">
+                    <div id="prog-bar" class="h-full bg-stone-800 w-0 transition-all"></div>
+                </div>
+
+                <div class="relative h-[400px] perspective mb-8">
+                    <div id="card-obj" class="card-inner" onclick="this.classList.toggle('is-flipped')">
+                        <div class="card-front justify-center items-center text-center">
+                            <span id="c-type" class="absolute top-6 right-6 px-2 py-1 bg-stone-100 text-[10px] font-bold rounded">WORD</span>
+                            <div class="absolute top-6 left-6 text-left">
+                                <p id="c-date" class="text-[9px] text-stone-300 font-bold">DATE</p>
+                                <p id="c-book" class="text-[10px] text-stone-400 italic">BOOK</p>
+                            </div>
+                            <h2 id="c-word" class="text-4xl font-bold text-stone-800 mb-2">连接中...</h2>
+                            <p id="c-reading" class="text-lg text-stone-400 italic">请确保网络通畅</p>
+                        </div>
+                        <div class="card-back">
+                            <p id="c-def" class="text-xl font-bold text-stone-800 mb-6 border-l-4 border-stone-800 pl-4"></p>
+                            <div class="p-4 bg-stone-50 rounded-2xl border border-stone-100">
+                                <p id="c-ex-ja" class="text-stone-700 text-sm mb-2"></p>
+                                <p id="c-ex-zh" class="text-stone-400 text-xs italic"></p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div class="grid grid-cols-2 gap-4 mb-8">
+                    <button onclick="mark(false)" class="py-4 bg-white border border-stone-200 rounded-2xl text-stone-400 font-bold text-sm">再练练</button>
+                    <button onclick="mark(true)" class="py-4 bg-stone-800 text-white rounded-2xl font-bold text-sm shadow-lg">记住了</button>
+                </div>
+                <div class="flex justify-center gap-12">
+                    <button onclick="move(-1)" class="text-stone-300 hover:text-stone-800">
+                        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 19l-7-7 7-7"/></svg>
+                    </button>
+                    <button onclick="move(1)" class="text-stone-300 hover:text-stone-800">
+                        <svg class="w-8 h-8" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5l7 7-7 7"/></svg>
+                    </button>
+                </div>
+            </div>
+        </section>
+
+        <!-- 分享页面 -->
+        <section id="view-community" class="view-content hidden max-w-2xl mx-auto space-y-4">
+            <div class="bg-white p-6 rounded-3xl border border-stone-200 shadow-sm">
+                <textarea id="msg-in" placeholder="分享今日的亮光..." class="w-full h-24 p-4 bg-stone-50 rounded-2xl text-sm mb-4 resize-none border-none focus:ring-1 focus:ring-stone-200"></textarea>
+                <button onclick="postMsg()" class="w-full py-3 bg-stone-800 text-white rounded-xl font-bold">发布分享</button>
+            </div>
+            <div id="msg-list" class="space-y-4"></div>
+        </section>
+
+        <!-- 管理页面 -->
+        <section id="view-admin" class="view-content hidden max-w-4xl mx-auto">
+            <div id="admin-lock" class="text-center py-20 bg-white rounded-3xl border border-stone-200">
+                <h3 class="font-bold mb-4">管理员登录</h3>
+                <input type="password" id="adm-pass" placeholder="密钥: Christ777" class="px-4 py-2 border rounded-xl mb-4 text-center"><br>
+                <button onclick="unlockAdmin()" class="px-8 py-2 bg-stone-800 text-white rounded-xl">解锁权限</button>
+            </div>
+            <div id="admin-panel" class="hidden space-y-6">
+                <form id="add-word-form" class="bg-white p-6 rounded-3xl border border-stone-200 grid grid-cols-1 md:grid-cols-3 gap-4">
+                    <select id="adm-book" class="h-10 border rounded-xl px-3 text-sm"></select>
+                    <input type="date" id="adm-date" class="h-10 border rounded-xl px-3 text-sm">
+                    <select id="adm-type" class="h-10 border rounded-xl px-3 text-sm">
+                        <option value="单词">单词</option><option value="语法">语法</option><option value="成语">成语</option>
+                    </select>
+                    <input type="text" id="adm-word" placeholder="单词" class="h-10 border rounded-xl px-3 text-sm">
+                    <input type="text" id="adm-reading" placeholder="假名" class="h-10 border rounded-xl px-3 text-sm">
+                    <input type="text" id="adm-def" placeholder="释义" class="h-10 border rounded-xl px-3 text-sm">
+                    <textarea id="adm-ex-ja" placeholder="日语例句" class="md:col-span-3 h-20 p-3 border rounded-xl text-sm"></textarea>
+                    <textarea id="adm-ex-zh" placeholder="中文翻译" class="md:col-span-3 h-20 p-3 border rounded-xl text-sm"></textarea>
+                    <button type="submit" class="md:col-span-3 py-3 bg-stone-800 text-white rounded-xl font-bold">即时推送全网</button>
+                </form>
+                <div class="bg-white rounded-3xl border border-stone-200 overflow-hidden">
+                    <table class="w-full text-xs text-left">
+                        <thead class="bg-stone-50 border-b"><tr><th class="p-4">内容</th><th class="p-4">操作</th></tr></thead>
+                        <tbody id="adm-list" class="divide-y"></tbody>
+                    </table>
+                </div>
+            </div>
+        </section>
+    </div>
+
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, onAuthStateChanged, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore, collection, addDoc, deleteDoc, doc, onSnapshot, updateDoc } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        const firebaseConfig = JSON.parse(__firebase_config);
+        const app = initializeApp(firebaseConfig);
+        const auth = getAuth(app);
+        const db = getFirestore(app);
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'bible-v6-fixed';
+
+        const bible66 = [
+            "創世記", "出エジプト記", "レビ記", "民数記", "申命記", "ヨシュア記", "士師記", "ルツ記", "サムエル記上", "サムエル記下", "列王記上", "列王記下", "歴代誌上", "歴代誌下", "エズラ記", "ネヘミヤ記", "エステル記", "ヨブ記", "詩編", "箴言", "伝道の書", "雅歌", "イザヤ書", "エレミヤ書", "哀歌", "エゼキエル書", "ダニエル書", "ホセア書", "ヨエル書", "アモス書", "オバデヤ書", "ヨナ書", "ミカ書", "ナホム書", "ハバクク書", "ゼパニヤ書", "ハガイ書", "ゼカリヤ書", "マラキ書",
+            "マタイによる福音書", "マルコによる福音書", "ルカによる福音書", "ヨハネによる福音書", "使徒言行録", "ローマの信徒への手紙", "コリントの信徒への手紙一", "コリントの信徒への手紙二", "ガラテヤの信徒への手纸", "エフェソの信徒への手纸", "フィリピの信徒への手纸", "コロサイの信徒への手纸", "テサロニケの信徒への手纸一", "テサロニケの信徒への手纸二", "テモテへの手纸一", "テモテへの手纸二", "テトスへの手纸", "フィレモンへの手纸", "ヘブライ人への手纸", "ヤコブの手纸", "ペトロの手纸一", "ペトロの手纸二", "ヨハネの手纸一", "ヨハネの手纸二", "ヨハネの手纸三", "ユダの手纸", "ヨハネの黙示録"
+        ];
+
+        let words = [], filtered = [], index = 0, user = null, isAdmin = false;
+
+        // --- 核心修复：更强的 Tab 切换 ---
+        window.changeView = (target) => {
+            // 隐藏所有视图
+            document.querySelectorAll('.view-content').forEach(v => v.classList.add('hidden'));
+            // 显示目标视图
+            document.getElementById(`view-${target}`).classList.remove('hidden');
+            // 更新按钮状态
+            document.querySelectorAll('.tab-btn').forEach(b => b.classList.remove('active'));
+            document.getElementById(`tab-${target}`).classList.add('active');
+        };
+
+        window.unlockAdmin = () => {
+            if(document.getElementById('adm-pass').value === "Christ777") {
+                isAdmin = true;
+                document.getElementById('admin-lock').classList.add('hidden');
+                document.getElementById('admin-panel').classList.remove('hidden');
+                renderAdmin();
+            } else { alert("密钥错误"); }
+        };
+
+        window.applyFilters = () => {
+            const date = document.getElementById('f-date-filter').value;
+            const book = document.getElementById('f-book-filter').value;
+            const type = document.getElementById('f-type-filter').value;
+            const mastery = document.getElementById('f-mastery-filter').value;
+
+            filtered = words.filter(w => {
+                const isM = w.mastered_by?.includes(user?.uid);
+                const matchM = mastery === 'unmastered' ? !isM : (mastery === 'mastered' ? isM : true);
+                return (!date || w.date === date) && (book === 'all' || w.book === book) && (type === 'all' || w.category === type) && matchM;
+            });
+            index = 0; render();
+        };
+
+        window.move = (step) => {
+            if(filtered.length <= 1) return;
+            index = (index + step + filtered.length) % filtered.length;
+            document.getElementById('card-obj').classList.remove('is-flipped');
+            render();
+        };
+
+        window.mark = async (status) => {
+            if(!filtered[index]) return;
+            const w = filtered[index];
+            let list = w.mastered_by || [];
+            if(status) { if(!list.includes(user.uid)) list.push(user.uid); }
+            else { list = list.filter(id => id !== user.uid); }
+            await updateDoc(doc(db, 'artifacts', appId, 'public', 'data', 'vocabulary', w.id), { mastered_by: list });
+            move(1);
+        };
+
+        window.postMsg = async () => {
+            const text = document.getElementById('msg-in').value.trim();
+            if(!text) return;
+            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'messages'), { text, createdAt: Date.now() });
+            document.getElementById('msg-in').value = "";
+            showToast("同步成功", "感谢您的分享");
+        };
+
+        window.delWord = async (id) => {
+            if(confirm("确定删除？")) await deleteDoc(doc(db, 'artifacts', appId, 'public', 'data', 'vocabulary', id));
+        };
+
+        function showToast(title, msg) {
+            const container = document.getElementById('toast-container');
+            const item = document.createElement('div');
+            item.className = "toast-item bg-white shadow-xl border p-4 rounded-2xl w-64 pointer-events-auto";
+            item.innerHTML = `<p class="text-[9px] font-bold text-stone-400 uppercase">${title}</p><p class="text-xs font-bold text-stone-800">${msg}</p>`;
+            container.appendChild(item);
+            setTimeout(() => { item.style.opacity = '0'; setTimeout(() => item.remove(), 500); }, 3000);
+        }
+
+        function render() {
+            const total = filtered.length, mCount = filtered.filter(w => w.mastered_by?.includes(user?.uid)).length;
+            const pct = total > 0 ? (mCount/total)*100 : 0;
+            document.getElementById('prog-val').innerText = `${mCount} / ${total}`;
+            document.getElementById('prog-pct').innerText = `${Math.round(pct)}%`;
+            document.getElementById('prog-bar').style.width = `${pct}%`;
+
+            if(total === 0) {
+                document.getElementById('c-word').innerText = "无词条";
+                document.getElementById('c-reading').innerText = "请调整筛选条件";
+                return;
+            }
+            const w = filtered[index];
+            document.getElementById('c-word').innerText = w.word;
+            document.getElementById('c-reading').innerText = w.reading;
+            document.getElementById('c-date').innerText = w.date || "----/--/--";
+            document.getElementById('c-book').innerText = w.book;
+            document.getElementById('c-type').innerText = w.category;
+            document.getElementById('c-def').innerText = w.definition;
+            document.getElementById('c-ex-ja').innerText = w.example_ja;
+            document.getElementById('c-ex-zh').innerText = w.example_zh;
+        }
+
+        function renderAdmin() {
+            document.getElementById('adm-list').innerHTML = words.sort((a,b)=>b.createdAt-a.createdAt).map(w => `
+                <tr><td class="p-4"><b>${w.word}</b></td><td class="p-4 text-right"><button onclick="delWord('${w.id}')" class="text-red-300">删除</button></td></tr>
+            `).join('');
+        }
+
+        const start = async () => {
+            const bFilter = document.getElementById('f-book-filter');
+            const bAdm = document.getElementById('adm-book');
+            bible66.forEach(b => {
+                const op = `<option value="${b}">${b}</option>`;
+                bFilter.innerHTML += op;
+                if(bAdm) bAdm.innerHTML += op;
+            });
+            document.getElementById('adm-date').valueAsDate = new Date();
+
+            if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) await signInWithCustomToken(auth, __initial_auth_token);
+            else await signInAnonymously(auth);
+            
+            onAuthStateChanged(auth, u => {
+                user = u;
+                if(u) {
+                    onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'vocabulary'), snap => {
+                        words = snap.docs.map(d => ({ id: d.id, ...d.data() }));
+                        applyFilters();
+                        if(isAdmin) renderAdmin();
+                    });
+                    onSnapshot(collection(db, 'artifacts', appId, 'public', 'data', 'messages'), snap => {
+                        const msgs = snap.docs.map(d => ({ id: d.id, ...d.data() })).sort((a,b)=>b.createdAt - a.createdAt);
+                        document.getElementById('msg-list').innerHTML = msgs.map(m => `
+                            <div class="bg-white p-5 rounded-2xl border border-stone-100">
+                                <p class="text-sm text-stone-700">${m.text}</p>
+                            </div>
+                        `).join('');
+                    });
+                }
+            });
+        };
+
+        document.getElementById('add-word-form').onsubmit = async (e) => {
+            e.preventDefault();
+            const data = {
+                book: document.getElementById('adm-book').value,
+                date: document.getElementById('adm-date').value,
+                category: document.getElementById('adm-type').value,
+                word: document.getElementById('adm-word').value,
+                reading: document.getElementById('adm-reading').value,
+                definition: document.getElementById('adm-def').value,
+                example_ja: document.getElementById('adm-ex-ja').value,
+                example_zh: document.getElementById('adm-ex-zh').value,
+                mastered_by: [], createdAt: Date.now()
+            };
+            await addDoc(collection(db, 'artifacts', appId, 'public', 'data', 'vocabulary'), data);
+            e.target.reset();
+            document.getElementById('adm-date').valueAsDate = new Date();
+            showToast("同步成功", "内容已推送到全网");
+        };
+
+        start();
+    </script>
+</body>
+</html>
+
